@@ -444,10 +444,38 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         originalY: poolTokenY.address,
         note: "Token order sorted by address (tokenX < tokenY)",
       })
+    } else if (tokenX?.address && tokenY?.address) {
+      // Fallback: use UI-selected tokens but sort by address to satisfy LBRouter token order
+      const uiTokenXAddr = tokenX.address.toLowerCase()
+      const uiTokenYAddr = tokenY.address.toLowerCase()
+
+      if (uiTokenXAddr < uiTokenYAddr) {
+        finalContractTokenX = tokenX.address
+        finalContractTokenY = tokenY.address
+        finalTokenX = tokenX
+        finalTokenY = tokenY
+        finalAmountX = amountX
+        finalAmountY = amountY
+      } else {
+        finalContractTokenX = tokenY.address
+        finalContractTokenY = tokenX.address
+        finalTokenX = tokenY
+        finalTokenY = tokenX
+        finalAmountX = amountY
+        finalAmountY = amountX
+      }
+
+      console.warn("⚠️ Using UI token addresses (sorted by address):", {
+        finalContractTokenX,
+        finalContractTokenY,
+        originalX: tokenX.address,
+        originalY: tokenY.address,
+        note: "Token order sorted by address (tokenX < tokenY)",
+      })
     } else {
       toast({
-        title: "Pool bilgileri yüklenemedi",
-        description: "Pool kontratından token bilgileri alınamadı. Lütfen sayfayı yenileyin.",
+        title: "Token bilgileri yüklenemedi",
+        description: "Token adresleri bulunamadı. Lütfen sayfayı yenileyin.",
         variant: "destructive",
       })
       console.error("❌ Contract token data missing:", {
@@ -457,6 +485,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         poolTokenY: poolTokenY?.address,
         poolPairAddress,
         poolContractData,
+        tokenX: tokenX?.address,
+        tokenY: tokenY?.address,
       })
       return
     }
@@ -554,12 +584,9 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       console.log("  Final tokenX:", finalTokenX?.symbol, finalTokenXAddr)
       console.log("  Final tokenY:", finalTokenY?.symbol, finalTokenYAddr)
 
-      // Check which UI token matches contractTokenX to determine amounts
-      const tokenXIsContractX = tokenX.address.toLowerCase() === finalTokenXAddr.toLowerCase()
-      console.log("  tokenXIsContractX:", tokenXIsContractX)
-      
-      const finalAmountXBig = tokenXIsContractX ? amtX : amtY
-      const finalAmountYBig = tokenXIsContractX ? amtY : amtX
+      // Amounts already aligned to contract token order above.
+      const finalAmountXBig = amtX
+      const finalAmountYBig = amtY
 
       // CRITICAL: Recalculate distribution based on CONTRACT token order
       // getDistribution returns distribution based on UI tokens, but we need contract order
@@ -593,7 +620,6 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         deltaIds,
         finalDistributionX,
         finalDistributionY,
-        tokenXIsContractX,
         note: "Distribution is now based on CONTRACT token order, not UI order"
       })
 
