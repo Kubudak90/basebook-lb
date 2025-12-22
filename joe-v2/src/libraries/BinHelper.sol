@@ -158,11 +158,7 @@ library BinHelper {
      * @param id The id of the bin
      */
     function verifyAmounts(bytes32 amounts, uint24 activeId, uint24 id) internal pure {
-        // id < activeId: lower price bins should only contain tokenY (amountX must be 0)
-        // id > activeId: higher price bins should only contain tokenX (amountY must be 0)
-        // Fix: Check X > 0 for lower bins, Y > 0 for higher bins
-        if ((id < activeId && (uint256(amounts) & type(uint128).max) > 0)
-            || (id > activeId && uint256(amounts) > type(uint128).max)) {
+        if (id < activeId && (amounts << 128) > 0 || id > activeId && uint256(amounts) > type(uint128).max) {
             revert BinHelper__CompositionFactorFlawed(id);
         }
     }

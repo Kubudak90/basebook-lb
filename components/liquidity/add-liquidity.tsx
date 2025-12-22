@@ -273,13 +273,15 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         break
     }
 
-    // Normalize weights to sum to 10000 (100%)
+    // CRITICAL FIX: Normalize weights to sum to 1e18 (PRECISION in LiquidityConfigurations.sol)
+    // TraderJoe uses 1e18 precision, not 10000!
+    const PRECISION = 1e18
     const sum = weights.reduce((a, b) => a + b, 0)
-    const normalizedWeights = weights.map(w => Math.floor((w / sum) * 10000))
-    
-    // Adjust sum to ensure it equals exactly 10000
+    const normalizedWeights = weights.map(w => Math.floor((w / sum) * PRECISION))
+
+    // Adjust sum to ensure it equals exactly PRECISION (1e18)
     const currentSum = normalizedWeights.reduce((a, b) => a + b, 0)
-    const diff = 10000 - currentSum
+    const diff = PRECISION - currentSum
     if (diff !== 0 && normalizedWeights.length > 0) {
       normalizedWeights[centerIndex] += diff
     }
