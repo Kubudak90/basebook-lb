@@ -572,9 +572,11 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       // Check which UI token matches contractTokenX to determine amounts
       const tokenXIsContractX = tokenX.address.toLowerCase() === finalTokenXAddr.toLowerCase()
       console.log("  tokenXIsContractX:", tokenXIsContractX)
-      
-      const finalAmountXBig = tokenXIsContractX ? amtX : amtY
-      const finalAmountYBig = tokenXIsContractX ? amtY : amtX
+
+      // finalAmountX and finalAmountY are ALREADY in contract order (swapped at line 417-418)
+      // So amtX and amtY are already correct - NO NEED TO SWAP AGAIN!
+      const finalAmountXBig = amtX
+      const finalAmountYBig = amtY
 
       // CRITICAL: Recalculate distribution based on CONTRACT token order
       // getDistribution returns distribution based on UI tokens, but we need contract order
@@ -617,8 +619,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
 
       console.log("  ✅ Final tokenX:", finalTokenXAddr)
       console.log("  ✅ Final tokenY:", finalTokenYAddr)
-      console.log("  ✅ Final amountX:", finalAmountXBig.toString())
-      console.log("  ✅ Final amountY:", finalAmountYBig.toString())
+      console.log("  ✅ Final amountX (contract order):", finalAmountXBig.toString())
+      console.log("  ✅ Final amountY (contract order):", finalAmountYBig.toString())
 
       // Use fetched activeId or fallback to center bin
       const activeIdToUse = poolActiveId ? BigInt(poolActiveId) : BigInt(8388608)
