@@ -12,6 +12,8 @@ import { LBRouterABI } from "@/lib/contracts/abis"
 import { useToast } from "@/hooks/use-toast"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
+import { useUserLiquidity } from "@/hooks/use-user-liquidity"
+import { formatUnits } from "viem"
 
 interface Token {
   address: string
@@ -21,25 +23,18 @@ interface Token {
   logoURI: string
 }
 
-// Mock user positions data
-const MOCK_POSITIONS = Array.from({ length: 40 }).map((_, i) => ({
-  binId: 8388608 + i - 20,
-  index: i,
-  price: 0.0008 + i * 0.00001,
-  amountX: i > 20 ? Math.random() * 0.5 + 0.1 : 0,
-  amountY: i <= 20 ? Math.random() * 500 + 100 : 0,
-  valueUSD: Math.random() * 100 + 50,
-  isSelected: false
-}))
-
 export function RemoveLiquidity() {
   const { address, isConnected } = useAccount()
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
 
+  // TODO: Make pool selectable - for now using WETH/USDC pool
+  // In production, add a dropdown to select from user's pools
+  const WETH_USDC_POOL = "0x89285eAfFd4a177C68D96e9135A9353A7D3175Cb" as `0x${string}`
+
   const [tokenX] = useState<Token | null>(TOKENS.WETH)
   const [tokenY] = useState<Token | null>(TOKENS.USDC)
-  const [binRange, setBinRange] = useState([15, 25])
+  const [binRange, setBinRange] = useState([0, 0])
   const [percentage, setPercentage] = useState([100])
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
@@ -47,33 +42,60 @@ export function RemoveLiquidity() {
     hash: txHash,
   })
 
+  // Fetch real user liquidity positions
+  const { positions, activeId, isLoading } = useUserLiquidity(WETH_USDC_POOL)
+
+  // Auto-select all bins when positions load
+  useMemo(() => {
+    if (positions.length > 0 && binRange[0] === 0 && binRange[1] === 0) {
+      setBinRange([0, positions.length - 1])
+    }
+  }, [positions, binRange])
+
   // Calculate selected bins and values
   const selectedData = useMemo(() => {
-    const selectedBins = MOCK_POSITIONS.filter(
+    const selectedBins = positions.filter(
       (_, i) => i >= binRange[0] && i <= binRange[1]
     )
-    const totalX = selectedBins.reduce((sum, b) => sum + b.amountX, 0)
-    const totalY = selectedBins.reduce((sum, b) => sum + b.amountY, 0)
-    const totalValue = selectedBins.reduce((sum, b) => sum + b.valueUSD, 0)
+
+    const totalBalance = selectedBins.reduce((sum, b) => sum + b.balance, BigInt(0))
+    const adjustedBalance = (totalBalance * BigInt(percentage[0])) / BigInt(100)
+
+    // Estimate amounts (simplified - actual calculation would need total supply)
+    // For now, showing the balance which represents shares
+    const totalX = selectedBins
+      .filter(b => b.binId >= (activeId || 0))
+      .reduce((sum, b) => sum + b.balance, BigInt(0))
+
+    const totalY = selectedBins
+      .filter(b => b.binId < (activeId || 0))
+      .reduce((sum, b) => sum + b.balance, BigInt(0))
 
     return {
       bins: selectedBins,
       count: selectedBins.length,
-      totalX: totalX * (percentage[0] / 100),
-      totalY: totalY * (percentage[0] / 100),
-      totalValue: totalValue * (percentage[0] / 100)
+      totalBalance: adjustedBalance,
+      totalX: (totalX * BigInt(percentage[0])) / BigInt(100),
+      totalY: (totalY * BigInt(percentage[0])) / BigInt(100),
     }
-  }, [binRange, percentage])
+  }, [positions, binRange, percentage, activeId])
 
   const handleRemoveLiquidity = async () => {
-    if (!tokenX || !tokenY || !address) return
+    if (!tokenX || !tokenY || !address || selectedData.count === 0) return
 
     try {
-      const selectedBins = MOCK_POSITIONS.filter(
+      const selectedBins = positions.filter(
         (_, i) => i >= binRange[0] && i <= binRange[1]
       )
+
+      // Extract bin IDs and calculate amounts
       const ids = selectedBins.map(b => BigInt(b.binId))
-      const amounts = selectedBins.map(() => BigInt(percentage[0]))
+      const amounts = selectedBins.map(b => (b.balance * BigInt(percentage[0])) / BigInt(100))
+
+      console.log("🗑️ Removing liquidity:")
+      console.log("  Bin IDs:", ids.map(id => id.toString()))
+      console.log("  Amounts:", amounts.map(amt => amt.toString()))
+      console.log("  Percentage:", percentage[0] + "%")
 
       const hash = await writeContractAsync({
         address: CONTRACTS.LBRouter as `0x${string}`,
@@ -83,20 +105,41 @@ export function RemoveLiquidity() {
           tokenX.address as `0x${string}`,
           tokenY.address as `0x${string}`,
           25, // binStep
-          BigInt(0),
-          BigInt(0),
+          BigInt(0), // amountXMin - TODO: Add slippage protection
+          BigInt(0), // amountYMin - TODO: Add slippage protection
           ids,
           amounts,
           address,
-          BigInt(Math.floor(Date.now() / 1000) + 1200),
+          BigInt(Math.floor(Date.now() / 1000) + 1200), // 20 min deadline
         ],
       })
 
       setTxHash(hash)
       toast({ title: "Liquidity removal submitted", description: "Waiting for confirmation..." })
     } catch (error: any) {
+      console.error("Remove liquidity error:", error)
       toast({ title: "Remove liquidity failed", description: error.message, variant: "destructive" })
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Spinner className="mr-2" />
+        <span>Loading your liquidity positions...</span>
+      </div>
+    )
+  }
+
+  if (positions.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <p className="text-muted-foreground mb-2">No liquidity positions found</p>
+        <p className="text-sm text-muted-foreground">
+          You don't have any liquidity in the WETH/USDC pool yet.
+        </p>
+      </Card>
+    )
   }
 
   return (
@@ -112,27 +155,28 @@ export function RemoveLiquidity() {
           </CardHeader>
           <CardContent>
             {/* Visual Bin Chart */}
-            <div className="h-[220px] flex items-end justify-center gap-0.5 mb-4 px-2">
-              {MOCK_POSITIONS.map((bin, i) => {
+            <div className="h-[220px] flex items-end justify-center gap-0.5 mb-4 px-2 overflow-x-auto">
+              {positions.map((bin, i) => {
                 const isSelected = i >= binRange[0] && i <= binRange[1]
-                const height = (bin.amountX + bin.amountY / 1000) * 100 + 20
-                const isCurrentPrice = i === 20
+                const balanceNormalized = Number(formatUnits(bin.balance, 18))
+                const height = Math.min(balanceNormalized * 50 + 10, 100)
+                const isActiveId = bin.binId === activeId
 
                 return (
                   <div
-                    key={i}
+                    key={bin.binId}
                     className={cn(
-                      "w-2 rounded-t transition-all cursor-pointer hover:opacity-100",
+                      "min-w-[8px] rounded-t transition-all cursor-pointer hover:opacity-100",
                       isSelected
-                        ? bin.amountX > 0 ? "bg-red-500" : "bg-green-500"
+                        ? bin.binId >= (activeId || 0) ? "bg-blue-500" : "bg-green-500"
                         : "bg-muted-foreground/20",
-                      isCurrentPrice && "ring-2 ring-primary ring-offset-1"
+                      isActiveId && "ring-2 ring-primary ring-offset-1"
                     )}
                     style={{
-                      height: `${Math.min(height, 100)}%`,
+                      height: `${height}%`,
                       opacity: isSelected ? 1 : 0.4
                     }}
-                    title={`Bin ${bin.binId}: $${bin.valueUSD.toFixed(2)}`}
+                    title={`Bin ${bin.binId}: ${formatUnits(bin.balance, 18)} shares`}
                   />
                 )
               })}
@@ -144,14 +188,14 @@ export function RemoveLiquidity() {
                 value={binRange}
                 onValueChange={setBinRange}
                 min={0}
-                max={39}
+                max={Math.max(0, positions.length - 1)}
                 step={1}
                 className="w-full"
               />
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Bin {MOCK_POSITIONS[binRange[0]]?.binId}</span>
+                <span>Bin {positions[binRange[0]]?.binId || 0}</span>
                 <span className="text-primary font-medium">Drag to select range</span>
-                <span>Bin {MOCK_POSITIONS[binRange[1]]?.binId}</span>
+                <span>Bin {positions[binRange[1]]?.binId || 0}</span>
               </div>
             </div>
 
@@ -163,29 +207,55 @@ export function RemoveLiquidity() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded bg-green-500" />
-                <span className="text-muted-foreground">{tokenY?.symbol} to Remove</span>
+                <span className="text-muted-foreground">{tokenY?.symbol} bins</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-red-500" />
-                <span className="text-muted-foreground">{tokenX?.symbol} to Remove</span>
+                <div className="w-3 h-3 rounded bg-blue-500" />
+                <span className="text-muted-foreground">{tokenX?.symbol} bins</span>
               </div>
+              {activeId && (
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded bg-primary ring-2 ring-primary ring-offset-1" />
+                  <span className="text-muted-foreground">Active Bin</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {/* Quick Select Buttons */}
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setBinRange([0, 39])} className="flex-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBinRange([0, positions.length - 1])}
+            className="flex-1"
+          >
             Select All
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setBinRange([0, 19])} className="flex-1">
-            Below Current
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const activeIndex = positions.findIndex(p => p.binId === activeId)
+              if (activeIndex > 0) setBinRange([0, activeIndex - 1])
+            }}
+            className="flex-1"
+          >
+            Below Active
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setBinRange([21, 39])} className="flex-1">
-            Above Current
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setBinRange([15, 25])} className="flex-1">
-            Around Current
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const activeIndex = positions.findIndex(p => p.binId === activeId)
+              if (activeIndex >= 0 && activeIndex < positions.length - 1) {
+                setBinRange([activeIndex + 1, positions.length - 1])
+              }
+            }}
+            className="flex-1"
+          >
+            Above Active
           </Button>
         </div>
       </div>
@@ -205,7 +275,9 @@ export function RemoveLiquidity() {
             </div>
             <div>
               <p className="font-medium">{tokenX?.symbol} - {tokenY?.symbol}</p>
-              <p className="text-xs text-muted-foreground">Your Liquidity Position</p>
+              <p className="text-xs text-muted-foreground">
+                {positions.length} bins with liquidity
+              </p>
             </div>
           </div>
         </Card>
@@ -242,30 +314,36 @@ export function RemoveLiquidity() {
 
         {/* Summary */}
         <Card className="p-4 bg-muted/30 border-border/50">
-          <h4 className="text-sm font-medium mb-3">You Will Receive</h4>
+          <h4 className="text-sm font-medium mb-3">You Will Remove</h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between items-center p-2 bg-background/50 rounded">
               <span className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-blue-500 text-[10px] font-bold text-white flex items-center justify-center">
                   {tokenX?.symbol.slice(0, 1)}
                 </div>
-                {tokenX?.symbol}
+                {tokenX?.symbol} Bins
               </span>
-              <span className="font-mono font-bold">{selectedData.totalX.toFixed(4)}</span>
+              <span className="font-mono font-bold">
+                {formatUnits(selectedData.totalX, tokenX?.decimals || 18).slice(0, 8)}
+              </span>
             </div>
             <div className="flex justify-between items-center p-2 bg-background/50 rounded">
               <span className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-green-500 text-[10px] font-bold text-white flex items-center justify-center">
                   {tokenY?.symbol.slice(0, 1)}
                 </div>
-                {tokenY?.symbol}
+                {tokenY?.symbol} Bins
               </span>
-              <span className="font-mono font-bold">{selectedData.totalY.toFixed(2)}</span>
+              <span className="font-mono font-bold">
+                {formatUnits(selectedData.totalY, tokenY?.decimals || 18).slice(0, 8)}
+              </span>
             </div>
             <hr className="border-border" />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Total Value</span>
-              <span className="font-bold text-lg">${selectedData.totalValue.toFixed(2)}</span>
+              <span className="text-muted-foreground">Total Shares</span>
+              <span className="font-bold">
+                {formatUnits(selectedData.totalBalance, 18).slice(0, 10)}
+              </span>
             </div>
           </div>
         </Card>
@@ -273,7 +351,7 @@ export function RemoveLiquidity() {
         {/* Action Button */}
         {!isConnected ? (
           <Button className="w-full h-12 text-base bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600">
-            Cüzdan Bağla
+            Connect Wallet
           </Button>
         ) : (
           <Button
@@ -287,13 +365,13 @@ export function RemoveLiquidity() {
                 Removing...
               </>
             ) : (
-              `Remove ${selectedData.count} Bins`
+              `Remove from ${selectedData.count} Bins`
             )}
           </Button>
         )}
 
         <p className="text-[10px] text-center text-muted-foreground">
-          Seçilen binlerden likidite çıkarılacaktır.
+          Liquidity will be removed from selected bins based on the percentage.
         </p>
       </div>
     </div>
