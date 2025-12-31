@@ -38,6 +38,7 @@ export function RemoveLiquidity() {
   const [binRange, setBinRange] = useState([0, 0])
   const [percentage, setPercentage] = useState([100])
   const [slippage, setSlippage] = useState("0.5") // Default 0.5% slippage
+  const [slippageError, setSlippageError] = useState<string | null>(null)
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
   const { isLoading: isProcessing } = useWaitForTransactionReceipt({
@@ -46,6 +47,35 @@ export function RemoveLiquidity() {
 
   // Fetch real user liquidity positions
   const { positions, activeId, isLoading } = useUserLiquidity(WETH_USDC_POOL)
+
+  // Validate slippage
+  const validateSlippage = (slip: string): string | null => {
+    if (!slip || slip.trim() === "") {
+      return "Slippage is required"
+    }
+
+    const num = Number.parseFloat(slip)
+
+    if (isNaN(num)) {
+      return "Please enter a valid number"
+    }
+
+    if (num < 0.01) {
+      return "Slippage too low (min 0.01%)"
+    }
+
+    if (num > 50) {
+      return "Slippage too high (max 50%)"
+    }
+
+    return null
+  }
+
+  const handleSlippageChange = (value: string) => {
+    setSlippage(value)
+    const error = validateSlippage(value)
+    setSlippageError(error)
+  }
 
   // Auto-select all bins when positions load
   useMemo(() => {
@@ -332,17 +362,22 @@ export function RemoveLiquidity() {
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <Label className="text-sm">Slippage Tolerance</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  value={slippage}
-                  onChange={(e) => setSlippage(e.target.value)}
-                  className="w-16 h-8 text-center text-sm"
-                  step="0.1"
-                  min="0.1"
-                  max="50"
-                />
-                <span className="text-sm">%</span>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    value={slippage}
+                    onChange={(e) => handleSlippageChange(e.target.value)}
+                    className={`w-16 h-8 text-center text-sm ${slippageError ? "border-red-500" : ""}`}
+                    step="0.1"
+                    min="0.01"
+                    max="50"
+                  />
+                  <span className="text-sm">%</span>
+                </div>
+                {slippageError && (
+                  <p className="text-[10px] text-red-500">{slippageError}</p>
+                )}
               </div>
             </div>
             <div className="flex gap-2">
@@ -351,7 +386,7 @@ export function RemoveLiquidity() {
                   key={slip}
                   variant={slippage === slip ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSlippage(slip)}
+                  onClick={() => handleSlippageChange(slip)}
                   className="flex-1"
                 >
                   {slip}%
@@ -418,13 +453,17 @@ export function RemoveLiquidity() {
           <Button
             className="w-full h-12 text-base bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600"
             onClick={handleRemoveLiquidity}
-            disabled={isProcessing || selectedData.count === 0}
+            disabled={isProcessing || selectedData.count === 0 || !!slippageError}
           >
             {isProcessing ? (
               <>
                 <Spinner className="mr-2" />
                 Removing...
               </>
+            ) : slippageError ? (
+              "Invalid Slippage"
+            ) : selectedData.count === 0 ? (
+              "Select Bins"
             ) : (
               `Remove from ${selectedData.count} Bins`
             )}

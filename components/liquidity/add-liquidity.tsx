@@ -349,6 +349,30 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
     }
   }
 
+  // Validate amounts
+  const hasValidInputs = () => {
+    if (!amountX || !amountY) return false
+
+    try {
+      const numX = Number.parseFloat(amountX)
+      const numY = Number.parseFloat(amountY)
+
+      if (isNaN(numX) || isNaN(numY)) return false
+      if (numX <= 0 || numY <= 0) return false
+
+      // Check against balances
+      if (balanceX && balanceY) {
+        const balX = Number.parseFloat(balanceX)
+        const balY = Number.parseFloat(balanceY)
+        if (numX > balX || numY > balY) return false
+      }
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const handleApproveX = async () => {
     if (!tokenX || !amountX) return
     try {
@@ -896,12 +920,14 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
               <Button
                 className="w-full h-12 text-base bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90"
                 onClick={handleAddLiquidity}
-                disabled={!amountX || !amountY || isProcessing || (poolPairAddress && isLoadingPoolData)}
+                disabled={!hasValidInputs() || isProcessing || (poolPairAddress && isLoadingPoolData)}
               >
                 {isProcessing ? (
                   <><Spinner className="mr-2" />Ekleniyor...</>
                 ) : poolPairAddress && isLoadingPoolData ? (
                   <><Spinner className="mr-2" />Pool bilgileri yükleniyor...</>
+                ) : !hasValidInputs() ? (
+                  "Geçersiz Miktar"
                 ) : (
                   "Likidite Ekle"
                 )}

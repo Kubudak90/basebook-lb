@@ -34,6 +34,7 @@ export function SwapCard() {
   const [fromAmount, setFromAmount] = useState("")
   const [slippage, setSlippage] = useState("0.5")
   const [isQuoting, setIsQuoting] = useState(false)
+  const [inputError, setInputError] = useState<string | null>(null)
 
   const { formattedBalance: fromBalance } = useTokenBalance(fromToken?.address as `0x${string}`)
   const { allowance, refetch: refetchAllowance } = useTokenAllowance(
@@ -97,12 +98,81 @@ export function SwapCard() {
     }
   }, [quoteData, toToken])
 
+  // Validate input amount
+  const validateAmount = (amount: string): string | null => {
+    if (!amount || amount.trim() === "") {
+      return null // Empty is ok, just disable button
+    }
+
+    const num = Number.parseFloat(amount)
+
+    if (isNaN(num)) {
+      return "Please enter a valid number"
+    }
+
+    if (num <= 0) {
+      return "Amount must be greater than 0"
+    }
+
+    if (num < 0) {
+      return "Amount cannot be negative"
+    }
+
+    // Check against balance
+    if (fromToken && fromBalance) {
+      const balance = Number.parseFloat(fromBalance)
+      if (num > balance) {
+        return `Insufficient balance. You have ${fromBalance} ${fromToken.symbol}`
+      }
+    }
+
+    return null
+  }
+
+  // Validate slippage
+  const validateSlippage = (slip: string): string | null => {
+    const num = Number.parseFloat(slip)
+
+    if (isNaN(num)) {
+      return "Invalid slippage"
+    }
+
+    if (num < 0.01) {
+      return "Slippage too low (min 0.01%)"
+    }
+
+    if (num > 50) {
+      return "Slippage too high (max 50%)"
+    }
+
+    return null
+  }
+
+  const handleAmountChange = (value: string) => {
+    setFromAmount(value)
+    const error = validateAmount(value)
+    setInputError(error)
+  }
+
+  const handleSlippageChange = (value: string) => {
+    setSlippage(value)
+    const error = validateSlippage(value)
+    if (error) {
+      toast({
+        title: "Invalid slippage",
+        description: error,
+        variant: "destructive",
+      })
+    }
+  }
+
   const handleSwap = () => {
     const temp = fromToken
     setFromToken(toToken)
     setToToken(temp)
     // Clear from amount when swapping to trigger new quote
     setFromAmount("")
+    setInputError(null)
   }
 
   const needsApproval = () => {
@@ -208,11 +278,16 @@ export function SwapCard() {
               type="number"
               placeholder="0.0"
               value={fromAmount}
-              onChange={(e) => setFromAmount(e.target.value)}
-              className="flex-1"
+              onChange={(e) => handleAmountChange(e.target.value)}
+              className={`flex-1 ${inputError ? "border-red-500" : ""}`}
+              min="0"
+              step="any"
             />
             <TokenSelect selectedToken={fromToken} onSelectToken={setFromToken} excludeToken={toToken} />
           </div>
+          {inputError && (
+            <p className="text-xs text-red-500">{inputError}</p>
+          )}
         </div>
 
         {/* Swap Button */}
@@ -294,7 +369,7 @@ export function SwapCard() {
           <Button
             className="w-full"
             onClick={handleSwapTokens}
-            disabled={!fromAmount || !calculatedOutput || isSwapping || isLoadingQuote}
+            disabled={!fromAmount || !calculatedOutput || isSwapping || isLoadingQuote || !!inputError}
           >
             {isSwapping ? (
               <>
@@ -306,6 +381,8 @@ export function SwapCard() {
                 <Spinner className="mr-2" />
                 Getting Quote...
               </>
+            ) : inputError ? (
+              "Invalid Input"
             ) : (
               "Swap"
             )}
