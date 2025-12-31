@@ -98,6 +98,54 @@ export function SwapCard() {
     }
   }, [quoteData, toToken])
 
+  // Calculate price impact
+  const priceImpact = useMemo(() => {
+    if (!quoteData || !toToken) return null
+
+    try {
+      const amounts = (quoteData as any).amounts
+      const virtualAmounts = (quoteData as any).virtualAmountsWithoutSlippage
+
+      if (!amounts || !virtualAmounts || amounts.length === 0 || virtualAmounts.length === 0) {
+        return null
+      }
+
+      // Get the last amounts (output amounts)
+      const actualAmount = amounts[amounts.length - 1]
+      const virtualAmount = virtualAmounts[virtualAmounts.length - 1]
+
+      if (!actualAmount || !virtualAmount || virtualAmount === BigInt(0)) {
+        return null
+      }
+
+      // Calculate price impact: (1 - actualAmount / virtualAmount) × 100
+      const actualNum = Number(formatUnits(actualAmount, toToken.decimals))
+      const virtualNum = Number(formatUnits(virtualAmount, toToken.decimals))
+
+      const impact = ((virtualNum - actualNum) / virtualNum) * 100
+      return impact
+    } catch {
+      return null
+    }
+  }, [quoteData, toToken])
+
+  // Get price impact color and severity
+  const getPriceImpactColor = (impact: number | null) => {
+    if (impact === null) return { color: "text-muted-foreground", bg: "bg-muted" }
+    if (impact < 1) return { color: "text-green-600", bg: "bg-green-50 dark:bg-green-950" }
+    if (impact < 3) return { color: "text-yellow-600", bg: "bg-yellow-50 dark:bg-yellow-950" }
+    if (impact < 5) return { color: "text-orange-600", bg: "bg-orange-50 dark:bg-orange-950" }
+    return { color: "text-red-600", bg: "bg-red-50 dark:bg-red-950" }
+  }
+
+  const getPriceImpactWarning = (impact: number | null) => {
+    if (impact === null) return null
+    if (impact >= 5) return "High price impact! Your trade will significantly move the market price."
+    if (impact >= 3) return "Moderate price impact. Consider splitting into smaller trades."
+    if (impact >= 1) return "Low price impact."
+    return null
+  }
+
   // Validate input amount
   const validateAmount = (amount: string): string | null => {
     if (!amount || amount.trim() === "") {
@@ -339,12 +387,34 @@ export function SwapCard() {
               <span className="text-muted-foreground">Slippage Tolerance</span>
               <span>{slippage}%</span>
             </div>
+            {priceImpact !== null && (
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Price Impact</span>
+                <span className={`font-semibold ${getPriceImpactColor(priceImpact).color}`}>
+                  {priceImpact.toFixed(2)}%
+                </span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">Minimum Received</span>
               <span>
                 {(Number.parseFloat(calculatedOutput) * (1 - Number.parseFloat(slippage) / 100)).toFixed(6)}{" "}
                 {toToken?.symbol}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* Price Impact Warning */}
+        {priceImpact !== null && priceImpact >= 1 && (
+          <div className={`p-3 rounded-lg text-sm ${getPriceImpactColor(priceImpact).bg}`}>
+            <div className="flex items-start gap-2">
+              <span className={`font-semibold ${getPriceImpactColor(priceImpact).color}`}>
+                ⚠️
+              </span>
+              <p className={getPriceImpactColor(priceImpact).color}>
+                {getPriceImpactWarning(priceImpact)}
+              </p>
             </div>
           </div>
         )}
