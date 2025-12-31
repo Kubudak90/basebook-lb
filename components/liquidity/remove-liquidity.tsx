@@ -63,23 +63,18 @@ export function RemoveLiquidity() {
     const totalBalance = selectedBins.reduce((sum, b) => sum + b.balance, BigInt(0))
     const adjustedBalance = (totalBalance * BigInt(percentage[0])) / BigInt(100)
 
-    // Estimate token amounts from bin reserves
-    // NOTE: This is an approximation. Actual amount = (userBalance / totalSupply) * binReserve
-    // For better accuracy, we'd need to fetch totalSupply for each bin
+    // Calculate actual token amounts using percentage
+    // positions.amountX/Y already contain the correct (userBalance/totalSupply) * binReserve
     let estimatedX = BigInt(0)
     let estimatedY = BigInt(0)
 
     selectedBins.forEach(bin => {
-      const userShare = (bin.balance * BigInt(percentage[0])) / BigInt(100)
+      // Apply percentage to user's actual share
+      const portionX = (bin.amountX * BigInt(percentage[0])) / BigInt(100)
+      const portionY = (bin.amountY * BigInt(percentage[0])) / BigInt(100)
 
-      if (bin.binId >= (activeId || 0)) {
-        // This bin has tokenX
-        // Rough estimate: assume user owns proportional share based on balance
-        estimatedX += (bin.binReserveX * userShare) / (bin.balance || BigInt(1))
-      } else {
-        // This bin has tokenY
-        estimatedY += (bin.binReserveY * userShare) / (bin.balance || BigInt(1))
-      }
+      estimatedX += portionX
+      estimatedY += portionY
     })
 
     return {
@@ -89,7 +84,7 @@ export function RemoveLiquidity() {
       estimatedX,
       estimatedY,
     }
-  }, [positions, binRange, percentage, activeId])
+  }, [positions, binRange, percentage])
 
   const handleRemoveLiquidity = async () => {
     if (!tokenX || !tokenY || !address || selectedData.count === 0) return

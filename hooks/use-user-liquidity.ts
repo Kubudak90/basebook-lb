@@ -84,12 +84,34 @@ export function useUserLiquidity(poolPairAddress: `0x${string}` | undefined) {
     contracts: binReserveContracts,
   })
 
+  // Batch fetch total supply for bins with non-zero balance
+  const totalSupplyContracts = useMemo(() => {
+    if (!poolPairAddress || !balanceData) return []
+
+    const binsWithBalance = binIdsToCheck.filter((binId, index) => {
+      const balance = balanceData[index]
+      return balance?.status === "success" && balance.result && balance.result > BigInt(0)
+    })
+
+    return binsWithBalance.map((binId) => ({
+      address: poolPairAddress,
+      abi: LBPairABI,
+      functionName: "totalSupply" as const,
+      args: [BigInt(binId)],
+      chainId: baseSepolia.id,
+    }))
+  }, [poolPairAddress, balanceData, binIdsToCheck])
+
+  const { data: totalSupplyData, isLoading: isLoadingTotalSupply } = useReadContracts({
+    contracts: totalSupplyContracts,
+  })
+
   // Combine all data into positions
   const positions = useMemo(() => {
     if (!balanceData || !activeId) return []
 
     const result: UserLiquidityPosition[] = []
-    let reserveIndex = 0
+    let dataIndex = 0
 
     binIdsToCheck.forEach((binId, index) => {
       const balanceResult = balanceData[index]
@@ -98,7 +120,7 @@ export function useUserLiquidity(poolPairAddress: `0x${string}` | undefined) {
         const balance = balanceResult.result
 
         // Get bin reserves
-        const reserveResult = binReserveData?.[reserveIndex]
+        const reserveResult = binReserveData?.[dataIndex]
         let binReserveX = BigInt(0)
         let binReserveY = BigInt(0)
 
@@ -107,11 +129,24 @@ export function useUserLiquidity(poolPairAddress: `0x${string}` | undefined) {
           binReserveY = BigInt(reserveResult.result[1])
         }
 
-        // Calculate user's share of reserves
-        // In LB, liquidity shares are fungible within each bin
-        // User amount = (user balance / total supply of bin) * bin reserves
-        // For simplicity, we'll just show the balance as the amount for now
-        // TODO: Calculate actual share based on total supply
+        // Get total supply for this bin
+        const totalSupplyResult = totalSupplyData?.[dataIndex]
+        let totalSupply = BigInt(0)
+
+        if (totalSupplyResult?.status === "success" && totalSupplyResult.result) {
+          totalSupply = BigInt(totalSupplyResult.result)
+        }
+
+        // Calculate user's actual share of reserves
+        // Formula: actualAmount = (userBalance / totalSupply) * binReserve
+        let amountX = BigInt(0)
+        let amountY = BigInt(0)
+
+        if (totalSupply > BigInt(0)) {
+          // User's share percentage of this bin
+          amountX = (balance * binReserveX) / totalSupply
+          amountY = (balance * binReserveY) / totalSupply
+        }
 
         // Calculate price from bin ID
         // price = (1 + binStep/10000)^(binId - 2^23)
@@ -123,23 +158,23 @@ export function useUserLiquidity(poolPairAddress: `0x${string}` | undefined) {
         result.push({
           binId,
           balance,
-          amountX: balance, // Simplified - actual calculation needed
-          amountY: balance, // Simplified - actual calculation needed
+          amountX,
+          amountY,
           binReserveX,
           binReserveY,
           price,
         })
 
-        reserveIndex++
+        dataIndex++
       }
     })
 
     return result.sort((a, b) => a.binId - b.binId)
-  }, [balanceData, binReserveData, binIdsToCheck, activeId])
+  }, [balanceData, binReserveData, totalSupplyData, binIdsToCheck, activeId])
 
   return {
     positions,
     activeId,
-    isLoading: isLoadingBalances || isLoadingReserves,
+    isLoading: isLoadingBalances || isLoadingReserves || isLoadingTotalSupply,
   }
 }

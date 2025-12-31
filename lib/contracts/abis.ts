@@ -31,6 +31,7 @@ export const LBPairABI = parseAbi([
   "function getActiveId() external view returns (uint24)",
   "function balanceOf(address account, uint256 id) external view returns (uint256)",
   "function balanceOfBatch(address[] accounts, uint256[] ids) external view returns (uint256[] balances)",
+  "function totalSupply(uint256 id) external view returns (uint256)",
 ])
 
 export const ERC20ABI = parseAbi([
