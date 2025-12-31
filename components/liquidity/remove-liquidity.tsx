@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Slider } from "@/components/ui/slider"
@@ -36,6 +37,7 @@ export function RemoveLiquidity() {
   const [tokenY] = useState<Token | null>(TOKENS.USDC)
   const [binRange, setBinRange] = useState([0, 0])
   const [percentage, setPercentage] = useState([100])
+  const [slippage, setSlippage] = useState("0.5") // Default 0.5% slippage
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
   const { isLoading: isProcessing } = useWaitForTransactionReceipt({
@@ -61,22 +63,31 @@ export function RemoveLiquidity() {
     const totalBalance = selectedBins.reduce((sum, b) => sum + b.balance, BigInt(0))
     const adjustedBalance = (totalBalance * BigInt(percentage[0])) / BigInt(100)
 
-    // Estimate amounts (simplified - actual calculation would need total supply)
-    // For now, showing the balance which represents shares
-    const totalX = selectedBins
-      .filter(b => b.binId >= (activeId || 0))
-      .reduce((sum, b) => sum + b.balance, BigInt(0))
+    // Estimate token amounts from bin reserves
+    // NOTE: This is an approximation. Actual amount = (userBalance / totalSupply) * binReserve
+    // For better accuracy, we'd need to fetch totalSupply for each bin
+    let estimatedX = BigInt(0)
+    let estimatedY = BigInt(0)
 
-    const totalY = selectedBins
-      .filter(b => b.binId < (activeId || 0))
-      .reduce((sum, b) => sum + b.balance, BigInt(0))
+    selectedBins.forEach(bin => {
+      const userShare = (bin.balance * BigInt(percentage[0])) / BigInt(100)
+
+      if (bin.binId >= (activeId || 0)) {
+        // This bin has tokenX
+        // Rough estimate: assume user owns proportional share based on balance
+        estimatedX += (bin.binReserveX * userShare) / (bin.balance || BigInt(1))
+      } else {
+        // This bin has tokenY
+        estimatedY += (bin.binReserveY * userShare) / (bin.balance || BigInt(1))
+      }
+    })
 
     return {
       bins: selectedBins,
       count: selectedBins.length,
       totalBalance: adjustedBalance,
-      totalX: (totalX * BigInt(percentage[0])) / BigInt(100),
-      totalY: (totalY * BigInt(percentage[0])) / BigInt(100),
+      estimatedX,
+      estimatedY,
     }
   }, [positions, binRange, percentage, activeId])
 
@@ -92,10 +103,19 @@ export function RemoveLiquidity() {
       const ids = selectedBins.map(b => BigInt(b.binId))
       const amounts = selectedBins.map(b => (b.balance * BigInt(percentage[0])) / BigInt(100))
 
+      // Calculate minimum amounts with slippage protection
+      const slippageMultiplier = BigInt(Math.floor((100 - Number.parseFloat(slippage)) * 100))
+      const amountXMin = (selectedData.estimatedX * slippageMultiplier) / BigInt(10000)
+      const amountYMin = (selectedData.estimatedY * slippageMultiplier) / BigInt(10000)
+
       console.log("🗑️ Removing liquidity:")
       console.log("  Bin IDs:", ids.map(id => id.toString()))
       console.log("  Amounts:", amounts.map(amt => amt.toString()))
       console.log("  Percentage:", percentage[0] + "%")
+      console.log("  Estimated X:", selectedData.estimatedX.toString())
+      console.log("  Estimated Y:", selectedData.estimatedY.toString())
+      console.log("  Min X (with slippage):", amountXMin.toString())
+      console.log("  Min Y (with slippage):", amountYMin.toString())
 
       const hash = await writeContractAsync({
         address: CONTRACTS.LBRouter as `0x${string}`,
@@ -105,8 +125,8 @@ export function RemoveLiquidity() {
           tokenX.address as `0x${string}`,
           tokenY.address as `0x${string}`,
           25, // binStep
-          BigInt(0), // amountXMin - TODO: Add slippage protection
-          BigInt(0), // amountYMin - TODO: Add slippage protection
+          amountXMin,
+          amountYMin,
           ids,
           amounts,
           address,
@@ -312,19 +332,53 @@ export function RemoveLiquidity() {
           </div>
         </Card>
 
+        {/* Slippage Tolerance */}
+        <Card className="p-4 bg-muted/30 border-border/50">
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <Label className="text-sm">Slippage Tolerance</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  value={slippage}
+                  onChange={(e) => setSlippage(e.target.value)}
+                  className="w-16 h-8 text-center text-sm"
+                  step="0.1"
+                  min="0.1"
+                  max="50"
+                />
+                <span className="text-sm">%</span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {["0.1", "0.5", "1.0", "3.0"].map((slip) => (
+                <Button
+                  key={slip}
+                  variant={slippage === slip ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSlippage(slip)}
+                  className="flex-1"
+                >
+                  {slip}%
+                </Button>
+              ))}
+            </div>
+          </div>
+        </Card>
+
         {/* Summary */}
         <Card className="p-4 bg-muted/30 border-border/50">
-          <h4 className="text-sm font-medium mb-3">You Will Remove</h4>
+          <h4 className="text-sm font-medium mb-3">Estimated Removal</h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between items-center p-2 bg-background/50 rounded">
               <span className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-blue-500 text-[10px] font-bold text-white flex items-center justify-center">
                   {tokenX?.symbol.slice(0, 1)}
                 </div>
-                {tokenX?.symbol} Bins
+                {tokenX?.symbol}
               </span>
               <span className="font-mono font-bold">
-                {formatUnits(selectedData.totalX, tokenX?.decimals || 18).slice(0, 8)}
+                {formatUnits(selectedData.estimatedX, tokenX?.decimals || 18).slice(0, 8)}
               </span>
             </div>
             <div className="flex justify-between items-center p-2 bg-background/50 rounded">
@@ -332,17 +386,29 @@ export function RemoveLiquidity() {
                 <div className="w-5 h-5 rounded-full bg-green-500 text-[10px] font-bold text-white flex items-center justify-center">
                   {tokenY?.symbol.slice(0, 1)}
                 </div>
-                {tokenY?.symbol} Bins
+                {tokenY?.symbol}
               </span>
               <span className="font-mono font-bold">
-                {formatUnits(selectedData.totalY, tokenY?.decimals || 18).slice(0, 8)}
+                {formatUnits(selectedData.estimatedY, tokenY?.decimals || 18).slice(0, 8)}
               </span>
             </div>
             <hr className="border-border" />
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Total Shares</span>
-              <span className="font-bold">
-                {formatUnits(selectedData.totalBalance, 18).slice(0, 10)}
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Minimum {tokenX?.symbol} (with {slippage}% slippage)</span>
+              <span className="font-medium">
+                {formatUnits(
+                  (selectedData.estimatedX * BigInt(Math.floor((100 - Number.parseFloat(slippage)) * 100))) / BigInt(10000),
+                  tokenX?.decimals || 18
+                ).slice(0, 8)}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Minimum {tokenY?.symbol} (with {slippage}% slippage)</span>
+              <span className="font-medium">
+                {formatUnits(
+                  (selectedData.estimatedY * BigInt(Math.floor((100 - Number.parseFloat(slippage)) * 100))) / BigInt(10000),
+                  tokenY?.decimals || 18
+                ).slice(0, 8)}
               </span>
             </div>
           </div>
