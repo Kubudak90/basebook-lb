@@ -14,7 +14,15 @@ import { useToast } from "@/hooks/use-toast"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { useUserLiquidity } from "@/hooks/use-user-liquidity"
+import { usePools } from "@/hooks/use-pools"
 import { formatUnits } from "viem"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 interface Token {
   address: string
@@ -29,12 +37,12 @@ export function RemoveLiquidity() {
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
 
-  // TODO: Make pool selectable - for now using WETH/USDC pool
-  // In production, add a dropdown to select from user's pools
-  const WETH_USDC_POOL = "0x89285eAfFd4a177C68D96e9135A9353A7D3175Cb" as `0x${string}`
+  // Fetch all available pools
+  const { pools, isLoading: isLoadingPools } = usePools()
 
-  const [tokenX] = useState<Token | null>(TOKENS.WETH)
-  const [tokenY] = useState<Token | null>(TOKENS.USDC)
+  // Pool selection state
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
+
   const [binRange, setBinRange] = useState([0, 0])
   const [percentage, setPercentage] = useState([100])
   const [slippage, setSlippage] = useState("0.5") // Default 0.5% slippage
@@ -45,8 +53,38 @@ export function RemoveLiquidity() {
     hash: txHash,
   })
 
-  // Fetch real user liquidity positions
-  const { positions, activeId, isLoading } = useUserLiquidity(WETH_USDC_POOL)
+  // Get selected pool info
+  const selectedPool = useMemo(() => {
+    if (!selectedPoolId) return null
+    return pools.find(p => p.id === selectedPoolId) || null
+  }, [selectedPoolId, pools])
+
+  // Auto-select first pool if available
+  useMemo(() => {
+    if (!selectedPoolId && pools.length > 0) {
+      setSelectedPoolId(pools[0].id)
+    }
+  }, [pools, selectedPoolId])
+
+  // Get tokens from selected pool
+  const tokenX = selectedPool ? {
+    address: selectedPool.tokenX.address,
+    symbol: selectedPool.tokenX.symbol,
+    decimals: selectedPool.tokenX.decimals,
+    name: selectedPool.tokenX.symbol,
+    logoURI: "",
+  } : null
+
+  const tokenY = selectedPool ? {
+    address: selectedPool.tokenY.address,
+    symbol: selectedPool.tokenY.symbol,
+    decimals: selectedPool.tokenY.decimals,
+    name: selectedPool.tokenY.symbol,
+    logoURI: "",
+  } : null
+
+  // Fetch real user liquidity positions for selected pool
+  const { positions, activeId, isLoading } = useUserLiquidity(selectedPool?.pairAddress)
 
   // Validate slippage
   const validateSlippage = (slip: string): string | null => {
@@ -77,12 +115,14 @@ export function RemoveLiquidity() {
     setSlippageError(error)
   }
 
-  // Auto-select all bins when positions load
+  // Auto-select all bins when positions load or pool changes
   useMemo(() => {
-    if (positions.length > 0 && binRange[0] === 0 && binRange[1] === 0) {
+    if (positions.length > 0) {
       setBinRange([0, positions.length - 1])
+    } else {
+      setBinRange([0, 0])
     }
-  }, [positions, binRange])
+  }, [positions, selectedPoolId])
 
   // Calculate selected bins and values
   const selectedData = useMemo(() => {
@@ -149,7 +189,7 @@ export function RemoveLiquidity() {
         args: [
           tokenX.address as `0x${string}`,
           tokenY.address as `0x${string}`,
-          25, // binStep
+          selectedPool?.binStep || 25, // Use pool's binStep
           amountXMin,
           amountYMin,
           ids,
@@ -167,6 +207,26 @@ export function RemoveLiquidity() {
     }
   }
 
+  if (isLoadingPools) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Spinner className="mr-2" />
+        <span>Loading pools...</span>
+      </div>
+    )
+  }
+
+  if (pools.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <p className="text-muted-foreground mb-2">No pools found</p>
+        <p className="text-sm text-muted-foreground">
+          No liquidity pools are available at the moment.
+        </p>
+      </Card>
+    )
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -176,22 +236,59 @@ export function RemoveLiquidity() {
     )
   }
 
-  if (positions.length === 0) {
+  if (positions.length === 0 && selectedPool) {
     return (
-      <Card className="p-8 text-center">
-        <p className="text-muted-foreground mb-2">No liquidity positions found</p>
-        <p className="text-sm text-muted-foreground">
-          You don't have any liquidity in the WETH/USDC pool yet.
-        </p>
-      </Card>
+      <div className="space-y-4">
+        {/* Pool Selector */}
+        <Card className="p-4">
+          <Label className="text-sm mb-2 block">Select Pool</Label>
+          <Select value={selectedPoolId || ""} onValueChange={setSelectedPoolId}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a pool" />
+            </SelectTrigger>
+            <SelectContent>
+              {pools.map((pool) => (
+                <SelectItem key={pool.id} value={pool.id}>
+                  {pool.tokenX.symbol} / {pool.tokenY.symbol} (Bin Step: {pool.binStep})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Card>
+
+        <Card className="p-8 text-center">
+          <p className="text-muted-foreground mb-2">No liquidity positions found</p>
+          <p className="text-sm text-muted-foreground">
+            You don't have any liquidity in the {selectedPool.tokenX.symbol}/{selectedPool.tokenY.symbol} pool yet.
+          </p>
+        </Card>
+      </div>
     )
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-      {/* LEFT: Chart for bin selection */}
-      <div className="lg:col-span-3 space-y-4">
-        <Card className="border-border/50 bg-card/50">
+    <div className="space-y-4">
+      {/* Pool Selector */}
+      <Card className="p-4">
+        <Label className="text-sm mb-2 block">Select Pool</Label>
+        <Select value={selectedPoolId || ""} onValueChange={setSelectedPoolId}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select a pool" />
+          </SelectTrigger>
+          <SelectContent>
+            {pools.map((pool) => (
+              <SelectItem key={pool.id} value={pool.id}>
+                {pool.tokenX.symbol} / {pool.tokenY.symbol} (Bin Step: {pool.binStep})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        {/* LEFT: Chart for bin selection */}
+        <div className="lg:col-span-3 space-y-4">
+          <Card className="border-border/50 bg-card/50">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-medium">Select Bins to Remove</CardTitle>
@@ -319,9 +416,12 @@ export function RemoveLiquidity() {
               </div>
             </div>
             <div>
-              <p className="font-medium">{tokenX?.symbol} - {tokenY?.symbol}</p>
+              <p className="font-medium">{tokenX?.symbol} / {tokenY?.symbol}</p>
               <p className="text-xs text-muted-foreground">
                 {positions.length} bins with liquidity
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Bin Step: {selectedPool?.binStep}
               </p>
             </div>
           </div>
@@ -473,6 +573,7 @@ export function RemoveLiquidity() {
         <p className="text-[10px] text-center text-muted-foreground">
           Liquidity will be removed from selected bins based on the percentage.
         </p>
+      </div>
       </div>
     </div>
   )
