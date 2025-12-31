@@ -2,12 +2,15 @@
 
 import { SwapCard } from "@/components/swap/swap-card"
 import { PoolPage } from "@/components/pools/pool-page"
+import { LiquidityCard } from "@/components/liquidity/liquidity-card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Droplets, Zap, Network, Layers } from "lucide-react"
+import { useState } from "react"
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState("pool")
   return (
     <div className="min-h-screen bg-gradient-to-b from-background via-background to-primary/5">
       {/* Header */}
@@ -33,15 +36,19 @@ export default function Home() {
       <main className="container py-8">
         <div className="mx-auto space-y-6">
           {/* Main Interface */}
-          <Tabs defaultValue="pool" className="w-full">
-            <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 h-12">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid w-full max-w-2xl mx-auto grid-cols-3 h-12">
               <TabsTrigger value="swap" className="text-base">
                 <Zap className="mr-2 h-4 w-4" />
                 Swap
               </TabsTrigger>
               <TabsTrigger value="pool" className="text-base">
                 <Layers className="mr-2 h-4 w-4" />
-                Pool
+                Pools
+              </TabsTrigger>
+              <TabsTrigger value="liquidity" className="text-base">
+                <Droplets className="mr-2 h-4 w-4" />
+                Liquidity
               </TabsTrigger>
             </TabsList>
             <TabsContent value="swap" className="mt-8">
@@ -50,7 +57,10 @@ export default function Home() {
               </div>
             </TabsContent>
             <TabsContent value="pool" className="mt-8">
-              <PoolPage />
+              <PoolPage onNavigateToLiquidity={() => setActiveTab("liquidity")} />
+            </TabsContent>
+            <TabsContent value="liquidity" className="mt-8">
+              <LiquidityCard />
             </TabsContent>
           </Tabs>
 
