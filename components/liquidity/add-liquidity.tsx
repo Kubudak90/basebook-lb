@@ -20,6 +20,7 @@ import { Slider } from "@/components/ui/slider"
 import { StrategySelector, StrategyType } from "./strategy-selector"
 import { LiquidityChart } from "./liquidity-chart"
 import { usePrices } from "@/hooks/use-prices"
+import { useTransactionHistory } from "@/hooks/use-transaction-history"
 
 interface Token {
   address: string
@@ -41,6 +42,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   const { address, isConnected } = useAccount()
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
+  const { addTransaction, updateTransaction } = useTransactionHistory()
 
   // Check if we're in pool context (tokens fixed)
   const isPoolContext = !!(poolTokenX && poolTokenY)
@@ -235,9 +237,24 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   )
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
-  const { isLoading: isProcessing } = useWaitForTransactionReceipt({
+  const { isLoading: isProcessing, isSuccess, isError } = useWaitForTransactionReceipt({
     hash: txHash,
   })
+
+  // Track transaction status
+  useEffect(() => {
+    if (!txHash) return
+
+    if (isSuccess) {
+      updateTransaction(txHash, { status: "success" })
+      toast({
+        title: "Liquidity added successfully",
+        description: "Your liquidity has been added to the pool",
+      })
+    } else if (isError) {
+      updateTransaction(txHash, { status: "failed", errorMessage: "Transaction failed" })
+    }
+  }, [txHash, isSuccess, isError, updateTransaction, toast])
 
   // Calculate distribution based on strategy
   // CRITICAL: In Trader Joe, bins with ID > activeId get tokenX, bins with ID < activeId get tokenY
@@ -685,6 +702,19 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
 
       setTxHash(hash)
+
+      // Add to transaction history
+      addTransaction({
+        type: "add_liquidity",
+        status: "pending",
+        hash,
+        poolInfo: {
+          tokenX: tokenX.symbol,
+          tokenY: tokenY.symbol,
+          binStep: finalBinStep,
+        },
+      })
+
       toast({ title: "Liquidity added", description: "Transaction submitted" })
       setAmountX("")
       setAmountY("")

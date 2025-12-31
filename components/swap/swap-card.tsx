@@ -15,6 +15,7 @@ import { parseUnits, formatUnits } from "viem"
 import { useToast } from "@/hooks/use-toast"
 import { Spinner } from "@/components/ui/spinner"
 import { baseSepolia } from "wagmi/chains"
+import { useTransactionHistory } from "@/hooks/use-transaction-history"
 
 interface Token {
   address: string
@@ -28,6 +29,7 @@ export function SwapCard() {
   const { address, isConnected } = useAccount()
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
+  const { addTransaction, updateTransaction } = useTransactionHistory()
 
   const [fromToken, setFromToken] = useState<Token | null>(TOKENS.WETH)
   const [toToken, setToToken] = useState<Token | null>(TOKENS.USDC)
@@ -49,9 +51,24 @@ export function SwapCard() {
     hash: approveTxHash,
   })
 
-  const { isLoading: isSwapping } = useWaitForTransactionReceipt({
+  const { isLoading: isSwapping, isSuccess: isSwapSuccess, isError: isSwapError } = useWaitForTransactionReceipt({
     hash: swapTxHash,
   })
+
+  // Track swap transaction status
+  useEffect(() => {
+    if (!swapTxHash) return
+
+    if (isSwapSuccess) {
+      updateTransaction(swapTxHash, { status: "success" })
+      toast({
+        title: "Swap successful",
+        description: "Your tokens have been swapped",
+      })
+    } else if (isSwapError) {
+      updateTransaction(swapTxHash, { status: "failed", errorMessage: "Transaction failed" })
+    }
+  }, [swapTxHash, isSwapSuccess, isSwapError, updateTransaction, toast])
 
   // Prepare quote parameters
   const quoteParams = useMemo(() => {
@@ -289,6 +306,22 @@ export function SwapCard() {
       })
 
       setSwapTxHash(hash)
+
+      // Add to transaction history
+      addTransaction({
+        type: "swap",
+        status: "pending",
+        hash,
+        fromToken: {
+          symbol: fromToken.symbol,
+          amount: fromAmount,
+        },
+        toToken: {
+          symbol: toToken.symbol,
+          amount: calculatedOutput,
+        },
+      })
+
       toast({
         title: "Swap submitted",
         description: "Waiting for confirmation...",

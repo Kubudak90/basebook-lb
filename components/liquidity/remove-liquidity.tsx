@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { useUserLiquidity } from "@/hooks/use-user-liquidity"
 import { usePools } from "@/hooks/use-pools"
 import { formatUnits } from "viem"
+import { useTransactionHistory } from "@/hooks/use-transaction-history"
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ export function RemoveLiquidity() {
   const { address, isConnected } = useAccount()
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
+  const { addTransaction, updateTransaction } = useTransactionHistory()
 
   // Fetch all available pools
   const { pools, isLoading: isLoadingPools } = usePools()
@@ -49,9 +51,24 @@ export function RemoveLiquidity() {
   const [slippageError, setSlippageError] = useState<string | null>(null)
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
-  const { isLoading: isProcessing } = useWaitForTransactionReceipt({
+  const { isLoading: isProcessing, isSuccess, isError } = useWaitForTransactionReceipt({
     hash: txHash,
   })
+
+  // Track transaction status
+  useEffect(() => {
+    if (!txHash) return
+
+    if (isSuccess) {
+      updateTransaction(txHash, { status: "success" })
+      toast({
+        title: "Liquidity removed successfully",
+        description: "Your liquidity has been removed from the pool",
+      })
+    } else if (isError) {
+      updateTransaction(txHash, { status: "failed", errorMessage: "Transaction failed" })
+    }
+  }, [txHash, isSuccess, isError, updateTransaction, toast])
 
   // Get selected pool info
   const selectedPool = useMemo(() => {
@@ -200,6 +217,19 @@ export function RemoveLiquidity() {
       })
 
       setTxHash(hash)
+
+      // Add to transaction history
+      addTransaction({
+        type: "remove_liquidity",
+        status: "pending",
+        hash,
+        poolInfo: {
+          tokenX: tokenX.symbol,
+          tokenY: tokenY.symbol,
+          binStep: selectedPool?.binStep || 25,
+        },
+      })
+
       toast({ title: "Liquidity removal submitted", description: "Waiting for confirmation..." })
     } catch (error: any) {
       console.error("Remove liquidity error:", error)
