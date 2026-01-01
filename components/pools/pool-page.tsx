@@ -10,11 +10,23 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Search, Plus, RefreshCw, Loader2 } from "lucide-react"
 import { PoolRow } from "./pool-row"
 import { usePools } from "@/hooks/use-pools"
+import { MyPools } from "@/components/my-pools"
 
-export function PoolPage() {
+interface PoolPageProps {
+    onNavigateToLiquidity?: () => void
+}
+
+export function PoolPage({ onNavigateToLiquidity }: PoolPageProps = {}) {
     const router = useRouter()
     const [searchTerm, setSearchTerm] = useState("")
     const [expandedPoolId, setExpandedPoolId] = useState<string | null>(null)
+
+    const handleManagePool = (poolId: string) => {
+        // Navigate to liquidity tab
+        if (onNavigateToLiquidity) {
+            onNavigateToLiquidity()
+        }
+    }
 
     const { pools, isLoading, error, refetch } = usePools()
 
@@ -162,9 +174,7 @@ export function PoolPage() {
                 </TabsContent>
 
                 <TabsContent value="my-pools" className="mt-4">
-                    <Card className="p-12 text-center">
-                        <p className="text-muted-foreground">Connect wallet to view your positions</p>
-                    </Card>
+                    <MyPools onManagePool={handleManagePool} />
                 </TabsContent>
 
                 <TabsContent value="rewards" className="mt-4">
