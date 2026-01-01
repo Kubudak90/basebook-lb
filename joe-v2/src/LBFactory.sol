@@ -742,6 +742,13 @@ contract LBFactory is Ownable2Step, AccessControl, ILBFactory {
 
     /**
      * @notice Returns whether the caller has the role or not, only the owner has the DEFAULT_ADMIN_ROLE
+     * @dev Design Note: The owner automatically has DEFAULT_ADMIN_ROLE through this override.
+     * This creates a unified access control model where:
+     * - Owner (via Ownable2Step) = DEFAULT_ADMIN_ROLE (for AccessControl functions)
+     * - Owner can grant/revoke other roles (LB_HOOKS_MANAGER_ROLE, etc.)
+     * - Ownership transfer via Ownable2Step automatically transfers DEFAULT_ADMIN_ROLE
+     * - DEFAULT_ADMIN_ROLE cannot be granted separately (see _grantRole)
+     *
      * @param role The role to check
      * @param account The address to check
      * @return Whether the account has the role or not
@@ -753,6 +760,11 @@ contract LBFactory is Ownable2Step, AccessControl, ILBFactory {
 
     /**
      * @notice Grants a role to an address, the DEFAULT_ADMIN_ROLE can not be granted
+     * @dev Design Note: DEFAULT_ADMIN_ROLE is permanently tied to the owner address.
+     * This prevents accidental or malicious granting of admin privileges to other addresses.
+     * To change the admin, use Ownable2Step.transferOwnership() instead.
+     * This ensures secure two-step ownership transfer with acceptance required.
+     *
      * @param role The role to grant
      * @param account The address to grant the role to
      * @return Whether the role has been granted or not
