@@ -109,7 +109,13 @@ export function SwapCard() {
         )
         : BigInt(0)
 
-      // For simplicity, using bin step 25 (adjust based on actual pools)
+      // Build Path struct for router (bin step 25, Version.V2_2)
+      const path = {
+        pairBinSteps: [25],
+        versions: [3], // Version.V2_2
+        tokenPath: [fromToken.address as `0x${string}`, toToken.address as `0x${string}`],
+      }
+
       const hash = await writeContractAsync({
         address: CONTRACTS.LBRouter as `0x${string}`,
         abi: LBRouterABI,
@@ -117,8 +123,7 @@ export function SwapCard() {
         args: [
           amountIn,
           minAmountOut,
-          [25], // pairBinSteps
-          [fromToken.address as `0x${string}`, toToken.address as `0x${string}`],
+          path,
           address,
           BigInt(Math.floor(Date.now() / 1000) + 1200), // 20 min deadline
         ],
