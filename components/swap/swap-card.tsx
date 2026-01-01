@@ -5,15 +5,16 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { TokenSelect } from "./token-select"
 import { ArrowDown, Settings } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { CONTRACTS, TOKENS } from "@/lib/contracts/addresses"
 import { LBRouterABI, ERC20ABI } from "@/lib/contracts/abis"
 import { useTokenBalance } from "@/lib/hooks/use-token-balance"
 import { useTokenAllowance } from "@/lib/hooks/use-token-allowance"
-import { parseUnits } from "viem"
+import { parseUnits, formatUnits } from "viem"
 import { useToast } from "@/hooks/use-toast"
 import { Spinner } from "@/components/ui/spinner"
+import { useSwapQuote } from "@/hooks/use-swap-quote"
 
 interface Token {
   address: string
@@ -39,6 +40,32 @@ export function SwapCard() {
     fromToken?.address as `0x${string}`,
     CONTRACTS.LBRouter as `0x${string}`,
   )
+
+  // Auto-fetch quote when fromAmount changes
+  const amountInBigInt = fromAmount && fromToken
+    ? (() => {
+        try {
+          return parseUnits(fromAmount, fromToken.decimals)
+        } catch {
+          return undefined
+        }
+      })()
+    : undefined
+
+  const { amountOut, isLoading: isLoadingQuote } = useSwapQuote({
+    tokenX: fromToken?.address as `0x${string}`,
+    tokenY: toToken?.address as `0x${string}`,
+    amountIn: amountInBigInt,
+  })
+
+  // Update toAmount when quote changes
+  useEffect(() => {
+    if (amountOut && toToken && fromAmount) {
+      setToAmount(formatUnits(amountOut, toToken.decimals))
+    } else if (!fromAmount) {
+      setToAmount("")
+    }
+  }, [amountOut, toToken, fromAmount])
 
   const [approveTxHash, setApproveTxHash] = useState<`0x${string}` | undefined>()
   const [swapTxHash, setSwapTxHash] = useState<`0x${string}` | undefined>()
@@ -186,15 +213,17 @@ export function SwapCard() {
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">To</span>
-            <span className="text-muted-foreground">Estimated</span>
+            <span className="text-muted-foreground">
+              {isLoadingQuote ? "Fetching quote..." : "Estimated"}
+            </span>
           </div>
           <div className="flex gap-2">
             <Input
               type="number"
               placeholder="0.0"
               value={toAmount}
-              onChange={(e) => setToAmount(e.target.value)}
-              className="flex-1"
+              readOnly
+              className="flex-1 cursor-not-allowed bg-muted"
             />
             <TokenSelect selectedToken={toToken} onSelectToken={setToToken} excludeToken={fromToken} />
           </div>
