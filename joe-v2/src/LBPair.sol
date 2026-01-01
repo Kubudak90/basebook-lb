@@ -573,9 +573,9 @@ contract LBPair is LBToken, ReentrancyGuardUpgradeable, Clone, ILBPair {
             amountsOut.transferX(_tokenX(), to);
         }
 
-        _nonReentrantAfter();
-
         Hooks.afterSwap(hooksParameters, msg.sender, to, swapForY_, amountsOut);
+
+        _nonReentrantAfter();
     }
 
     /**
@@ -627,9 +627,9 @@ contract LBPair is LBToken, ReentrancyGuardUpgradeable, Clone, ILBPair {
 
         emit FlashLoan(msg.sender, receiver, _parameters.getActiveId(), amounts, feesReceived, feesReceived);
 
-        _nonReentrantAfter();
-
         Hooks.afterFlashLoan(hooksParameters, msg.sender, address(receiver), totalFees, feesReceived);
+
+        _nonReentrantAfter();
     }
 
     /**
@@ -683,9 +683,9 @@ contract LBPair is LBToken, ReentrancyGuardUpgradeable, Clone, ILBPair {
 
         if (amountsLeft > 0) amountsLeft.transfer(_tokenX(), _tokenY(), refundTo);
 
-        _nonReentrantAfter();
-
         Hooks.afterMint(hooksParameters, msg.sender, to, liquidityConfigs, amountsReceived.sub(amountsLeft));
+
+        _nonReentrantAfter();
     }
 
     /**
@@ -752,9 +752,9 @@ contract LBPair is LBToken, ReentrancyGuardUpgradeable, Clone, ILBPair {
 
         amountsOut.transfer(_tokenX(), _tokenY(), to);
 
-        _nonReentrantAfter();
-
         Hooks.afterBurn(hooksParameters, msg.sender, from_, to, ids, amountsToBurn);
+
+        _nonReentrantAfter();
     }
 
     /**
@@ -891,9 +891,9 @@ contract LBPair is LBToken, ReentrancyGuardUpgradeable, Clone, ILBPair {
 
         LBToken.batchTransferFrom(from, to, ids, amounts);
 
-        _nonReentrantAfter();
-
         Hooks.afterBatchTransferFrom(hooksParameters, msg.sender, from, to, ids, amounts);
+
+        _nonReentrantAfter();
     }
 
     /**
