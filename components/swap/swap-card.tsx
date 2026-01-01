@@ -163,6 +163,20 @@ export function SwapCard() {
     return null
   }
 
+  // Calculate minimum received with slippage using BigInt for precision
+  const minReceived = useMemo(() => {
+    if (!calculatedOutput || !toToken) return null
+
+    try {
+      const expectedOut = parseUnits(calculatedOutput, toToken.decimals)
+      const slippageBps = BigInt(Math.floor(Number.parseFloat(slippage) * 100))
+      const minOut = (expectedOut * (BigInt(10000) - slippageBps)) / BigInt(10000)
+      return formatUnits(minOut, toToken.decimals)
+    } catch {
+      return null
+    }
+  }, [calculatedOutput, toToken, slippage])
+
   // Validate input amount
   const validateAmount = (amount: string): string | null => {
     if (!amount || amount.trim() === "") {
@@ -285,8 +299,10 @@ export function SwapCard() {
       const amountIn = parseUnits(fromAmount, fromToken.decimals)
       const expectedOut = parseUnits(calculatedOutput, toToken.decimals)
 
-      // Apply slippage protection
-      const minAmountOut = (expectedOut * BigInt(Math.floor((100 - Number.parseFloat(slippage)) * 100))) / BigInt(10000)
+      // Apply slippage protection using basis points to avoid floating point precision issues
+      // slippage is percentage (e.g., "0.5" = 0.5%), convert to basis points (50 bps)
+      const slippageBps = BigInt(Math.floor(Number.parseFloat(slippage) * 100))
+      const minAmountOut = (expectedOut * (BigInt(10000) - slippageBps)) / BigInt(10000)
 
       // Get bin steps from quote
       const binSteps = (quoteData as any).binSteps || [25]
@@ -431,7 +447,7 @@ export function SwapCard() {
             <div className="flex justify-between">
               <span className="text-muted-foreground">Minimum Received</span>
               <span>
-                {(Number.parseFloat(calculatedOutput) * (1 - Number.parseFloat(slippage) / 100)).toFixed(6)}{" "}
+                {minReceived ? Number.parseFloat(minReceived).toFixed(6) : "0.000000"}{" "}
                 {toToken?.symbol}
               </span>
             </div>
