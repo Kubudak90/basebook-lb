@@ -102,11 +102,9 @@ export function SwapCard() {
 
     try {
       const amountIn = parseUnits(fromAmount, fromToken.decimals)
+      // Calculate minAmountOut using BigInt arithmetic to avoid floating point precision issues
       const minAmountOut = toAmount
-        ? parseUnits(
-          (Number.parseFloat(toAmount) * (1 - Number.parseFloat(slippage) / 100)).toFixed(toToken.decimals),
-          toToken.decimals,
-        )
+        ? (parseUnits(toAmount, toToken.decimals) * BigInt(10000 - Math.floor(Number.parseFloat(slippage) * 100))) / BigInt(10000)
         : BigInt(0)
 
       // For simplicity, using bin step 25 (adjust based on actual pools)

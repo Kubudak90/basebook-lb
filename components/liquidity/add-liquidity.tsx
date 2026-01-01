@@ -20,6 +20,8 @@ import { Slider } from "@/components/ui/slider"
 import { StrategySelector, StrategyType } from "./strategy-selector"
 import { LiquidityChart } from "./liquidity-chart"
 import { usePrices } from "@/hooks/use-prices"
+import { readContract, waitForTransactionReceipt } from "wagmi/actions"
+import { wagmiConfig } from "@/lib/web3/wagmi-config"
 
 interface Token {
   address: string
@@ -348,9 +350,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
       setTxHash(hash)
       toast({ title: "Approval submitted", description: "Waiting for confirmation..." })
-      // Wait for transaction to complete before refetching
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Wait for transaction confirmation before refetching
+      await waitForTransactionReceipt(wagmiConfig, { hash })
       await refetchAllowanceX()
+      toast({ title: "Approval confirmed", description: `${tokenX.symbol} approved successfully` })
     } catch (error: any) {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" })
     }
@@ -370,9 +373,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
       setTxHash(hash)
       toast({ title: "Approval submitted", description: "Waiting for confirmation..." })
-      // Wait for transaction to complete before refetching
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Wait for transaction confirmation before refetching
+      await waitForTransactionReceipt(wagmiConfig, { hash })
       await refetchAllowanceY()
+      toast({ title: "Approval confirmed", description: `${tokenY.symbol} approved successfully` })
     } catch (error: any) {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" })
     }
@@ -476,14 +480,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
     // This ensures we have the latest allowance values
     const finalAmountXBig = parseUnits(finalAmountX, finalTokenX.decimals)
     const finalAmountYBig = parseUnits(finalAmountY, finalTokenY.decimals)
-    
-    // Read allowances directly from contract for final tokens
-    const { readContract } = await import("wagmi/actions")
-    const { wagmiConfig } = await import("@/lib/web3/wagmi-config")
-    
+
     let finalTokenXAllowance: bigint
     let finalTokenYAllowance: bigint
-    
+
     try {
       const [allowanceXResult, allowanceYResult] = await Promise.all([
         readContract(wagmiConfig, {
@@ -499,9 +499,14 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
           args: [address, CONTRACTS.LBRouter as `0x${string}`],
         }),
       ])
-      
-      finalTokenXAllowance = allowanceXResult as bigint
-      finalTokenYAllowance = allowanceYResult as bigint
+
+      // Type guard for bigint results
+      if (typeof allowanceXResult !== 'bigint' || typeof allowanceYResult !== 'bigint') {
+        throw new Error('Invalid allowance result type')
+      }
+
+      finalTokenXAllowance = allowanceXResult
+      finalTokenYAllowance = allowanceYResult
       
       console.log("🔍 Approval Check (DIRECT CONTRACT READ):", {
         finalTokenX: finalTokenX.address,
