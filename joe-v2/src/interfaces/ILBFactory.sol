@@ -35,6 +35,7 @@ interface ILBFactory {
     error LBFactory__SameHooksParameters(bytes32 hooksParameters);
     error LBFactory__InvalidHooksParameters();
     error LBFactory__CannotGrantDefaultAdminRole();
+    error LBFactory__InvalidStaticFeeParameters();
 
     /**
      * @dev Structure to store the LBPair information, such as:

@@ -443,6 +443,14 @@ contract LBFactory is Ownable2Step, AccessControl, ILBFactory {
     ) external override onlyOwner {
         if (binStep < _MIN_BIN_STEP) revert LBFactory__BinStepTooLow(binStep);
 
+        // Validate that at least one parameter is non-zero (same validation as LBPair)
+        if (
+            baseFactor == 0 && filterPeriod == 0 && decayPeriod == 0 && reductionFactor == 0
+                && variableFeeControl == 0 && protocolShare == 0 && maxVolatilityAccumulator == 0
+        ) {
+            revert LBFactory__InvalidStaticFeeParameters();
+        }
+
         bytes32 preset = bytes32(0).setStaticFeeParameters(
             baseFactor,
             filterPeriod,
