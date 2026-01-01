@@ -223,7 +223,13 @@ export function usePoolDetails(pairAddress: `0x${string}` | undefined) {
                 {
                     address: pairAddress,
                     abi: LBPairABI,
-                    functionName: "getReservesAndId",
+                    functionName: "getReserves",
+                    chainId: baseSepolia.id,
+                },
+                {
+                    address: pairAddress,
+                    abi: LBPairABI,
+                    functionName: "getActiveId",
                     chainId: baseSepolia.id,
                 },
                 {
@@ -236,13 +242,14 @@ export function usePoolDetails(pairAddress: `0x${string}` | undefined) {
             : [],
     })
 
-    const reservesAndId = data?.[0]?.status === "success" ? data[0].result : null
-    const binStep = data?.[1]?.status === "success" ? data[1].result : null
+    const reserves = data?.[0]?.status === "success" ? data[0].result as readonly [bigint, bigint] : null
+    const activeId = data?.[1]?.status === "success" ? data[1].result : null
+    const binStep = data?.[2]?.status === "success" ? data[2].result : null
 
     return {
-        reserveX: reservesAndId?.[0] as bigint | undefined,
-        reserveY: reservesAndId?.[1] as bigint | undefined,
-        activeId: reservesAndId?.[2] as number | undefined,
+        reserveX: reserves?.[0],
+        reserveY: reserves?.[1],
+        activeId: activeId as number | undefined,
         binStep: binStep as number | undefined,
         isLoading,
         error,
