@@ -36,25 +36,29 @@ function sortTokens(tokenA: string, tokenB: string): { tokenX: string; tokenY: s
 }
 
 // Generate all unique token pairs from known tokens
+// Computed once at module load time since TOKENS is const
 function getAllTokenPairs() {
     const tokens = Object.values(TOKENS)
     const pairs: { tokenX: string; tokenY: string }[] = []
-    
+
     for (let i = 0; i < tokens.length; i++) {
         for (let j = i + 1; j < tokens.length; j++) {
             const sorted = sortTokens(tokens[i].address, tokens[j].address)
             pairs.push(sorted)
         }
     }
-    
+
     return pairs
 }
+
+// Pre-compute token pairs at module level since TOKENS is const
+const TOKEN_PAIRS = getAllTokenPairs()
 
 export function usePools() {
     const { address } = useAccount()
 
-    // Get all token pairs
-    const tokenPairs = useMemo(() => getAllTokenPairs(), [])
+    // Use pre-computed token pairs (no need for useMemo)
+    const tokenPairs = TOKEN_PAIRS
 
     // Build contract calls to get all pairs for each token combination
     const getAllPairsCalls = tokenPairs.map((pair) => ({

@@ -20,6 +20,9 @@ import { Slider } from "@/components/ui/slider"
 import { StrategySelector, StrategyType } from "./strategy-selector"
 import { LiquidityChart } from "./liquidity-chart"
 import { usePrices } from "@/hooks/use-prices"
+import { readContract, waitForTransactionReceipt } from "wagmi/actions"
+import { wagmiConfig } from "@/lib/web3/wagmi-config"
+import { logger } from "@/lib/utils/logger"
 import { useTransactionHistory } from "@/hooks/use-transaction-history"
 
 interface Token {
@@ -126,7 +129,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   // Debug: Log contract data status with full details
   useEffect(() => {
     if (poolPairAddress && poolContractData) {
-      console.log("🔍 Pool Contract Data Status (DETAILED):", {
+      logger.log("🔍 Pool Contract Data Status (DETAILED):", {
         poolPairAddress,
         isLoading: isLoadingPoolData,
         dataLength: poolContractData.length,
@@ -150,7 +153,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       
       // Log why extraction failed
       if (!contractTokenX || !contractTokenY) {
-        console.error("❌ Extraction failed - Details:", {
+        logger.error("❌ Extraction failed - Details:", {
           firstResult: poolContractData[0],
           secondResult: poolContractData[1],
           firstStatus: poolContractData[0]?.status,
@@ -393,9 +396,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   const handleApproveX = async () => {
     if (!tokenX || !amountX) return
     try {
-      const amount = parseUnits(amountX, tokenX.decimals)
-      // Approve a bit more to account for fees and slippage (110% of amount)
-      const approvalAmount = (amount * BigInt(110)) / BigInt(100)
+      // Approve max uint256 to avoid repeated approvals (common DEX pattern)
+      const approvalAmount = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
       const hash = await writeContractAsync({
         address: tokenX.address as `0x${string}`,
         abi: ERC20ABI,
@@ -404,9 +406,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
       setTxHash(hash)
       toast({ title: "Approval submitted", description: "Waiting for confirmation..." })
-      // Wait for transaction to complete before refetching
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Wait for transaction confirmation before refetching
+      await waitForTransactionReceipt(wagmiConfig, { hash })
       await refetchAllowanceX()
+      toast({ title: "Approval confirmed", description: `${tokenX.symbol} approved successfully` })
     } catch (error: any) {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" })
     }
@@ -415,9 +418,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   const handleApproveY = async () => {
     if (!tokenY || !amountY) return
     try {
-      const amount = parseUnits(amountY, tokenY.decimals)
-      // Approve a bit more to account for fees and slippage (110% of amount)
-      const approvalAmount = (amount * BigInt(110)) / BigInt(100)
+      // Approve max uint256 to avoid repeated approvals (common DEX pattern)
+      const approvalAmount = BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
       const hash = await writeContractAsync({
         address: tokenY.address as `0x${string}`,
         abi: ERC20ABI,
@@ -426,9 +428,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
       setTxHash(hash)
       toast({ title: "Approval submitted", description: "Waiting for confirmation..." })
-      // Wait for transaction to complete before refetching
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Wait for transaction confirmation before refetching
+      await waitForTransactionReceipt(wagmiConfig, { hash })
       await refetchAllowanceY()
+      toast({ title: "Approval confirmed", description: `${tokenY.symbol} approved successfully` })
     } catch (error: any) {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" })
     }
@@ -462,7 +465,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       // Use contract's token addresses (BEST - most reliable)
       finalContractTokenX = contractTokenX
       finalContractTokenY = contractTokenY
-      console.log("✅ Using contract token addresses")
+      logger.log("✅ Using contract token addresses")
       
       // Determine which UI token matches contractTokenX
       const tokenXIsContractX = tokenX.address.toLowerCase() === contractTokenX.toLowerCase()
@@ -493,7 +496,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         finalAmountX = amountY
         finalAmountY = amountX
       }
-      console.warn("⚠️ Using fallback token addresses (contract call failed):", {
+      logger.warn("⚠️ Using fallback token addresses (contract call failed):", {
         finalContractTokenX,
         finalContractTokenY,
         originalX: poolTokenX.address,
@@ -506,7 +509,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         description: "Pool kontratından token bilgileri alınamadı. Lütfen sayfayı yenileyin.",
         variant: "destructive",
       })
-      console.error("❌ Contract token data missing:", {
+      logger.error("❌ Contract token data missing:", {
         contractTokenX,
         contractTokenY,
         poolTokenX: poolTokenX?.address,
@@ -532,14 +535,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
     // This ensures we have the latest allowance values
     const finalAmountXBig = parseUnits(finalAmountX, finalTokenX.decimals)
     const finalAmountYBig = parseUnits(finalAmountY, finalTokenY.decimals)
-    
-    // Read allowances directly from contract for final tokens
-    const { readContract } = await import("wagmi/actions")
-    const { wagmiConfig } = await import("@/lib/web3/wagmi-config")
-    
+
     let finalTokenXAllowance: bigint
     let finalTokenYAllowance: bigint
-    
+
     try {
       const [allowanceXResult, allowanceYResult] = await Promise.all([
         readContract(wagmiConfig, {
@@ -555,11 +554,16 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
           args: [address, CONTRACTS.LBRouter as `0x${string}`],
         }),
       ])
+
+      // Type guard for bigint results
+      if (typeof allowanceXResult !== 'bigint' || typeof allowanceYResult !== 'bigint') {
+        throw new Error('Invalid allowance result type')
+      }
+
+      finalTokenXAllowance = allowanceXResult
+      finalTokenYAllowance = allowanceYResult
       
-      finalTokenXAllowance = allowanceXResult as bigint
-      finalTokenYAllowance = allowanceYResult as bigint
-      
-      console.log("🔍 Approval Check (DIRECT CONTRACT READ):", {
+      logger.log("🔍 Approval Check (DIRECT CONTRACT READ):", {
         finalTokenX: finalTokenX.address,
         finalTokenY: finalTokenY.address,
         finalTokenXAllowance: finalTokenXAllowance.toString(),
@@ -579,7 +583,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         return
       }
     } catch (error: any) {
-      console.error("❌ Failed to read allowances:", error)
+      logger.error("❌ Failed to read allowances:", error)
       toast({
         title: "Hata",
         description: "Allowance kontrolü yapılamadı. Lütfen tekrar deneyin.",
@@ -601,17 +605,21 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       const finalTokenYAddr = finalContractTokenY as string
 
       // Debug logs
-      console.log("🔍 DEBUG - Token Order Check:")
-      console.log("  poolPairAddress:", poolPairAddress)
-      console.log("  contractTokenX:", contractTokenX || "Using fallback:", finalContractTokenX)
-      console.log("  contractTokenY:", contractTokenY || "Using fallback:", finalContractTokenY)
-      console.log("  UI tokenX.address:", tokenX.address)
-      console.log("  UI tokenY.address:", tokenY.address)
-      console.log("  Final tokenX:", finalTokenX?.symbol, finalTokenXAddr)
-      console.log("  Final tokenY:", finalTokenY?.symbol, finalTokenYAddr)
+      logger.log("🔍 DEBUG - Token Order Check:")
+      logger.log("  poolPairAddress:", poolPairAddress)
+      logger.log("  contractTokenX:", contractTokenX || "Using fallback:", finalContractTokenX)
+      logger.log("  contractTokenY:", contractTokenY || "Using fallback:", finalContractTokenY)
+      logger.log("  UI tokenX.address:", tokenX.address)
+      logger.log("  UI tokenY.address:", tokenY.address)
+      logger.log("  Final tokenX:", finalTokenX?.symbol, finalTokenXAddr)
+      logger.log("  Final tokenY:", finalTokenY?.symbol, finalTokenYAddr)
 
       // Check which UI token matches contractTokenX to determine amounts
       const tokenXIsContractX = tokenX.address.toLowerCase() === finalTokenXAddr.toLowerCase()
+      logger.log("  tokenXIsContractX:", tokenXIsContractX)
+      
+      const finalAmountXBig = tokenXIsContractX ? amtX : amtY
+      const finalAmountYBig = tokenXIsContractX ? amtY : amtX
       console.log("  tokenXIsContractX:", tokenXIsContractX)
 
       // finalAmountX and finalAmountY are ALREADY in contract order (swapped at line 417-418)
@@ -650,7 +658,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         }
       }
       
-      console.log("🔍 Distribution Check:", {
+      logger.log("🔍 Distribution Check:", {
         deltaIds,
         finalDistributionX,
         finalDistributionY,
@@ -658,6 +666,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         note: "Distribution is now based on CONTRACT token order, not UI order"
       })
 
+      logger.log("  ✅ Final tokenX:", finalTokenXAddr)
+      logger.log("  ✅ Final tokenY:", finalTokenYAddr)
+      logger.log("  ✅ Final amountX:", finalAmountXBig.toString())
+      logger.log("  ✅ Final amountY:", finalAmountYBig.toString())
       console.log("  ✅ Final tokenX:", finalTokenXAddr)
       console.log("  ✅ Final tokenY:", finalTokenYAddr)
       console.log("  ✅ Final amountX (contract order):", finalAmountXBig.toString())
@@ -666,10 +678,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       // Use fetched activeId or fallback to center bin
       const activeIdToUse = poolActiveId ? BigInt(poolActiveId) : BigInt(8388608)
       
-      console.log("🔍 Final Contract Data:")
-      console.log("  contractTokenX:", contractTokenX)
-      console.log("  contractTokenY:", contractTokenY)
-      console.log("  poolActiveId:", poolActiveId)
+      logger.log("🔍 Final Contract Data:")
+      logger.log("  contractTokenX:", contractTokenX)
+      logger.log("  contractTokenY:", contractTokenY)
+      logger.log("  poolActiveId:", poolActiveId)
 
       const liquidityParams = {
         tokenX: finalTokenXAddr as `0x${string}`,
@@ -689,10 +701,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         deadline: BigInt(Math.floor(Date.now() / 1000) + 1200),
       }
 
-      console.log("📤 Sending transaction with params:")
-      console.log("  tokenX:", liquidityParams.tokenX)
-      console.log("  tokenY:", liquidityParams.tokenY)
-      console.log("  binStep:", liquidityParams.binStep.toString())
+      logger.log("📤 Sending transaction with params:")
+      logger.log("  tokenX:", liquidityParams.tokenX)
+      logger.log("  tokenY:", liquidityParams.tokenY)
+      logger.log("  binStep:", liquidityParams.binStep.toString())
 
       const hash = await writeContractAsync({
         address: CONTRACTS.LBRouter as `0x${string}`,
@@ -719,8 +731,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       setAmountX("")
       setAmountY("")
     } catch (error: any) {
-      console.error("❌ Transaction failed:", error)
-      console.error("❌ Error details:", {
+      logger.error("❌ Transaction failed:", error)
+      logger.error("❌ Error details:", {
         message: error.message,
         shortMessage: error.shortMessage,
         cause: error.cause,
