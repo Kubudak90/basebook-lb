@@ -23,6 +23,7 @@ import { usePrices } from "@/hooks/use-prices"
 import { readContract, waitForTransactionReceipt } from "wagmi/actions"
 import { wagmiConfig } from "@/lib/web3/wagmi-config"
 import { logger } from "@/lib/utils/logger"
+import { useTransactionHistory } from "@/hooks/use-transaction-history"
 
 interface Token {
   address: string
@@ -44,6 +45,7 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   const { address, isConnected } = useAccount()
   const { toast } = useToast()
   const { writeContractAsync } = useWriteContract()
+  const { addTransaction, updateTransaction } = useTransactionHistory()
 
   // Check if we're in pool context (tokens fixed)
   const isPoolContext = !!(poolTokenX && poolTokenY)
@@ -238,9 +240,24 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
   )
 
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
-  const { isLoading: isProcessing } = useWaitForTransactionReceipt({
+  const { isLoading: isProcessing, isSuccess, isError } = useWaitForTransactionReceipt({
     hash: txHash,
   })
+
+  // Track transaction status
+  useEffect(() => {
+    if (!txHash) return
+
+    if (isSuccess) {
+      updateTransaction(txHash, { status: "success" })
+      toast({
+        title: "Liquidity added successfully",
+        description: "Your liquidity has been added to the pool",
+      })
+    } else if (isError) {
+      updateTransaction(txHash, { status: "failed", errorMessage: "Transaction failed" })
+    }
+  }, [txHash, isSuccess, isError, updateTransaction, toast])
 
   // Calculate distribution based on strategy
   // CRITICAL: In Trader Joe, bins with ID > activeId get tokenX, bins with ID < activeId get tokenY
@@ -276,23 +293,38 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         break
     }
 
-    // Normalize weights to sum to 10000 (100%)
+    // CRITICAL FIX: Normalize weights to sum to 1e18 (PRECISION in LiquidityConfigurations.sol)
+    // TraderJoe uses 1e18 precision, not 10000!
+    // IMPORTANT: We store as string to avoid JavaScript Number precision loss (1e18 > Number.MAX_SAFE_INTEGER)
+    const PRECISION = "1000000000000000000" // 1e18 as string
+    const PRECISION_BI = BigInt(PRECISION)
+
     const sum = weights.reduce((a, b) => a + b, 0)
-    const normalizedWeights = weights.map(w => Math.floor((w / sum) * 10000))
-    
-    // Adjust sum to ensure it equals exactly 10000
-    const currentSum = normalizedWeights.reduce((a, b) => a + b, 0)
-    const diff = 10000 - currentSum
-    if (diff !== 0 && normalizedWeights.length > 0) {
-      normalizedWeights[centerIndex] += diff
+
+    // Calculate using BigInt for exact precision
+    const normalizedWeights: string[] = weights.map(w => {
+      const ratio = w / sum
+      // Multiply ratio by 1e18 using BigInt math
+      // ratio * 1e18 = (ratio * 1e9) * 1e9 to stay in safe Number range
+      const ratioBig = Math.floor(ratio * 1e9) // Safe: ratio < 1, so this < 1e9
+      const scaledBI = BigInt(ratioBig) * BigInt(1e9) // Now scale to 1e18
+      return scaledBI.toString()
+    })
+
+    // Adjust sum to ensure it equals exactly 1e18
+    const currentSum = normalizedWeights.reduce((a, b) => BigInt(a) + BigInt(b), BigInt(0))
+    const diff = PRECISION_BI - currentSum
+    if (diff !== BigInt(0) && normalizedWeights.length > 0) {
+      normalizedWeights[centerIndex] = (BigInt(normalizedWeights[centerIndex]) + diff).toString()
     }
 
     // CRITICAL: Split distribution based on bin position relative to active bin
     // deltaId < 0 (bin ID < activeId) → tokenY only (lower price)
     // deltaId > 0 (bin ID > activeId) → tokenX only (higher price)
     // deltaId = 0 (bin ID = activeId) → can have both, but typically tokenX or tokenY
-    const distributionX: number[] = []
-    const distributionY: number[] = []
+    // Use string[] to maintain precision (no Number conversion until final BigInt)
+    const distributionX: string[] = []
+    const distributionY: string[] = []
 
     for (let i = 0; i < numBins; i++) {
       const deltaId = deltaIds[i]
@@ -300,17 +332,17 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
 
       if (deltaId < 0) {
         // Bin ID < activeId → lower price → tokenY only
-        distributionX.push(0)
+        distributionX.push("0")
         distributionY.push(weight)
       } else if (deltaId > 0) {
         // Bin ID > activeId → higher price → tokenX only
         distributionX.push(weight)
-        distributionY.push(0)
+        distributionY.push("0")
       } else {
         // deltaId = 0 → active bin → typically tokenX (can be adjusted)
         // For simplicity, we'll put it in tokenX, but this could be split
         distributionX.push(weight)
-        distributionY.push(0)
+        distributionY.push("0")
       }
     }
 
@@ -332,6 +364,30 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
     try {
       const amount = parseUnits(amountY, tokenY.decimals)
       return (allowanceY as bigint) < amount
+    } catch {
+      return false
+    }
+  }
+
+  // Validate amounts
+  const hasValidInputs = () => {
+    if (!amountX || !amountY) return false
+
+    try {
+      const numX = Number.parseFloat(amountX)
+      const numY = Number.parseFloat(amountY)
+
+      if (isNaN(numX) || isNaN(numY)) return false
+      if (numX <= 0 || numY <= 0) return false
+
+      // Check against balances
+      if (balanceX && balanceY) {
+        const balX = Number.parseFloat(balanceX)
+        const balY = Number.parseFloat(balanceY)
+        if (numX > balX || numY > balY) return false
+      }
+
+      return true
     } catch {
       return false
     }
@@ -564,32 +620,41 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       
       const finalAmountXBig = tokenXIsContractX ? amtX : amtY
       const finalAmountYBig = tokenXIsContractX ? amtY : amtX
+      console.log("  tokenXIsContractX:", tokenXIsContractX)
+
+      // finalAmountX and finalAmountY are ALREADY in contract order (swapped at line 417-418)
+      // So amtX and amtY are already correct - NO NEED TO SWAP AGAIN!
+      const finalAmountXBig = amtX
+      const finalAmountYBig = amtY
 
       // CRITICAL: Recalculate distribution based on CONTRACT token order
       // getDistribution returns distribution based on UI tokens, but we need contract order
       // deltaId < 0 → bin ID < activeId → lower price → contract tokenY
       // deltaId >= 0 → bin ID >= activeId → higher price → contract tokenX
       const numBins = deltaIds.length
-      const finalDistributionX: number[] = []
-      const finalDistributionY: number[] = []
+      const finalDistributionX: string[] = []
+      const finalDistributionY: string[] = []
       
       // Get base weights from getDistribution (they're strategy-based, not token-based)
-      const baseWeights = getDistribution.distributionX.map((x, i) => 
-        x + getDistribution.distributionY[i]
-      ) // Sum of both distributions gives us the weight for each bin
+      // distributionX and distributionY are now strings (for precision), convert to BigInt for math
+      const baseWeights = getDistribution.distributionX.map((x, i) => {
+        const xBig = BigInt(x)
+        const yBig = BigInt(getDistribution.distributionY[i])
+        return (xBig + yBig).toString() // Sum as BigInt, store as string
+      })
       
       for (let i = 0; i < numBins; i++) {
         const deltaId = deltaIds[i]
         const weight = baseWeights[i]
-        
+
         if (deltaId < 0) {
           // Bin ID < activeId → lower price → contract tokenY only
-          finalDistributionX.push(0)
+          finalDistributionX.push("0")
           finalDistributionY.push(weight)
         } else {
           // Bin ID >= activeId → higher price → contract tokenX only
           finalDistributionX.push(weight)
-          finalDistributionY.push(0)
+          finalDistributionY.push("0")
         }
       }
       
@@ -605,6 +670,10 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       logger.log("  ✅ Final tokenY:", finalTokenYAddr)
       logger.log("  ✅ Final amountX:", finalAmountXBig.toString())
       logger.log("  ✅ Final amountY:", finalAmountYBig.toString())
+      console.log("  ✅ Final tokenX:", finalTokenXAddr)
+      console.log("  ✅ Final tokenY:", finalTokenYAddr)
+      console.log("  ✅ Final amountX (contract order):", finalAmountXBig.toString())
+      console.log("  ✅ Final amountY (contract order):", finalAmountYBig.toString())
 
       // Use fetched activeId or fallback to center bin
       const activeIdToUse = poolActiveId ? BigInt(poolActiveId) : BigInt(8388608)
@@ -625,8 +694,8 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
         activeIdDesired: activeIdToUse,
         idSlippage: BigInt(100), // Increased slippage for safety
         deltaIds: deltaIds.map(BigInt),
-        distributionX: finalDistributionX.map(BigInt),
-        distributionY: finalDistributionY.map(BigInt),
+        distributionX: finalDistributionX.map(s => BigInt(s)),
+        distributionY: finalDistributionY.map(s => BigInt(s)),
         to: address,
         refundTo: address,
         deadline: BigInt(Math.floor(Date.now() / 1000) + 1200),
@@ -645,6 +714,19 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
       })
 
       setTxHash(hash)
+
+      // Add to transaction history
+      addTransaction({
+        type: "add_liquidity",
+        status: "pending",
+        hash,
+        poolInfo: {
+          tokenX: tokenX.symbol,
+          tokenY: tokenY.symbol,
+          binStep: finalBinStep,
+        },
+      })
+
       toast({ title: "Liquidity added", description: "Transaction submitted" })
       setAmountX("")
       setAmountY("")
@@ -880,12 +962,14 @@ export function AddLiquidity({ poolTokenX, poolTokenY, poolBinStep, poolPairAddr
               <Button
                 className="w-full h-12 text-base bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90"
                 onClick={handleAddLiquidity}
-                disabled={!amountX || !amountY || isProcessing || (poolPairAddress && isLoadingPoolData)}
+                disabled={!hasValidInputs() || isProcessing || (poolPairAddress && isLoadingPoolData)}
               >
                 {isProcessing ? (
                   <><Spinner className="mr-2" />Ekleniyor...</>
                 ) : poolPairAddress && isLoadingPoolData ? (
                   <><Spinner className="mr-2" />Pool bilgileri yükleniyor...</>
+                ) : !hasValidInputs() ? (
+                  "Geçersiz Miktar"
                 ) : (
                   "Likidite Ekle"
                 )}
